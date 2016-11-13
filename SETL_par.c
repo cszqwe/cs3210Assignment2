@@ -1,10 +1,15 @@
+#if __STDC_VERSION__ >= 199901L
+#define _XOPEN_SOURCE 600
+#else
+#define _XOPEN_SOURCE 500
+#endif /* __STDC_VERSION__ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
 #include <mpi.h>
-
 /*
 MPI Global Variables
 */
@@ -77,7 +82,10 @@ void insertEnd(MATCHLIST*, int, int, int, int);
 
 void printList(MATCHLIST*);
 
+int matchToInt(MATCH *mat);
 
+int* transferListToArr(MATCHLIST* list);
+MATCH* intToMatch(int index, int iteration);
 /***********************************************************
    Search related functions
 ***********************************************************/
@@ -87,7 +95,7 @@ void printList(MATCHLIST*);
 #define E 1 //90 degree clockwise
 #define S 2 //180 degree clockwise
 #define W 3 //90 degree anti-clockwise
-
+#define MAX_FIND_ONCE 100000
 char** readPatternFromFile( char* fname, int* size );
 
 void rotate90(char** current, char** rotated, int size);
@@ -101,6 +109,8 @@ void searchSinglePattern(char** world, int wSizeRow, int wSizeCol, int interatio
 int min(int a, int b){
     if (a < b) return a; else return b;
 }
+
+int sortFunction( const void *a, const void *b);
 /***********************************************************
    Main function
 ***********************************************************/
@@ -111,7 +121,7 @@ int masterWork(int argc, char** argv){
     int dir, iterations, iter;
     int size, patternSize;
     long long before, after;
-    MATCHLIST*list;
+    MATCHLIST* list, *tmpList;
     MPI_Status Stat;
     int sendTag = 0;
     if (argc < 4 ){
@@ -123,6 +133,8 @@ int masterWork(int argc, char** argv){
     curW = readWorldFromFile(argv[1], &size);
     nextW = allocateSquareMatrix(size+2, DEAD);
 
+    //Start timer
+    before = wallClockTime();
 
     printf("World Size = %d\n", size);
 
@@ -142,7 +154,6 @@ int masterWork(int argc, char** argv){
         MPI_Send(basicInfo, 3, MPI_INT, i, sendTag, MPI_COMM_WORLD);
     }
 
-    printf("After sending out size and iteration information\n");
 
 #ifdef DEBUG
     printSquareMatrix(patterns[N], patternSize);
@@ -156,7 +167,6 @@ int masterWork(int argc, char** argv){
             MPI_Send(patterns[i][0], patternSize * patternSize, MPI_CHAR, j, sendTag, MPI_COMM_WORLD);
         }
     }    
-    printf("After sending out all four patterns\n");
     
     sendTag++;
     int responsibleRows[slaves];
@@ -173,12 +183,30 @@ int masterWork(int argc, char** argv){
     }
 
 
-    //Start timer
-    before = wallClockTime();
 
     //Actual work start
     list = newList();
+    for (iter = 0; iter < iterations; iter++){
+        tmpList = newList();
+        for (int i = 0; i < slaves; i++){
+            int matchSize;
+            MPI_Recv(&matchSize, 1, MPI_INT, i, iter, MPI_COMM_WORLD, &Stat);
+            int* matchArr = (int *) malloc(sizeof(int) * matchSize);
+            MPI_Recv(matchArr, matchSize, MPI_INT, i, iter, MPI_COMM_WORLD, &Stat);
+            for (int j = 0; j < matchSize; j++){
+                MATCH *newMatch = intToMatch(matchArr[j], iter);
+                insertEnd(tmpList, newMatch->iteration, newMatch->row, newMatch->col, newMatch->rotation);
+            }
+        }
+        int* tmpArr = transferListToArr(tmpList);
 
+        qsort((void *)tmpArr, tmpList->nItem, sizeof(int), sortFunction);
+        for (int j = 0; j < tmpList->nItem; j++){
+            MATCH *newMatch = intToMatch(tmpArr[j], iter);
+            insertEnd(list, newMatch->iteration, newMatch->row, newMatch->col, newMatch->rotation);
+            
+        }            
+    }
 //     for (iter = 0; iter < iterations; iter++){
 
 // #ifdef DEBUG
@@ -196,13 +224,13 @@ int masterWork(int argc, char** argv){
 //     }
 
 
-//     printList( list );
+    printList( list );
 
-//     //Stop timer
-//     after = wallClockTime();
+    //Stop timer
+    after = wallClockTime();
 
-//     printf("Sequential SETL took %1.2f seconds\n", 
-//         ((float)(after - before))/1000000000);
+    printf("Parallel SETL took %1.2f seconds\n", 
+        ((float)(after - before))/1000000000);
 
 
 //     //Clean up
@@ -234,7 +262,9 @@ int slaveWork(){
     size = basicInfo[0];
     iterations = basicInfo[1];
     patternSize = basicInfo[2];
+#ifdef DEBUG
     printf("Slave node %d received size = %d iterations = %d patternSize = %d\n", myid, size, iterations, patternSize);
+#endif
     char tmpChars[4][patternSize * patternSize];
     for (int i = 0; i < 4; i++){
         receiveTag++;
@@ -242,8 +272,8 @@ int slaveWork(){
         MPI_Recv(tmpChars[i], patternSize * patternSize, MPI_CHAR, MASTER_ID, receiveTag, MPI_COMM_WORLD, &status);
         patterns[i] = allocateSquareMatrixNoEmpty(patternSize, tmpChars[i]);
     }
-    printf("Slave node %d received four pattern matrix\n", myid);
 #ifdef DEBUG
+    printf("Slave node %d received four pattern matrix\n", myid);
     printSquareMatrix(patterns[N], patternSize);
     printSquareMatrix(patterns[E], patternSize);
     printSquareMatrix(patterns[S], patternSize);
@@ -273,7 +303,6 @@ int slaveWork(){
     }
     curW = allocateMatrixNoEmpty((size + 2), myRowNumber, matrixInfo);
     nextW = allocateMatrix((size + 2), myRowNumber, DEAD);
-    printf("Slave node %d received the world\n", myid);
 #ifdef DEBUG
     for (int i = 1; i < myRowNumber; i++){
         for (int j = 1; j <= size; j++){
@@ -285,7 +314,6 @@ int slaveWork(){
     //searchPatterns( curW, myRowNumber-1, size, 0, patterns, patternSize, list, rowOffset);
     //printList(list);
     int sendTag = 0;
-    printf("proces id: %d number of rows: %d\n", myid, myRowNumber);
     for (int i = 0; i< iterations; i++){
         searchPatterns( curW, myRowNumber-1, size, i, patterns, patternSize, list, rowOffset);
         evolveWorld(curW, nextW, myRowNumber-2, size);
@@ -293,15 +321,17 @@ int slaveWork(){
         curW = nextW;
         nextW = temp;
         char buffer[size];
-        // if (myid == 1 && i == 1){
-        //     printf("world is like!\n");
-        //     for (int q = 0; q < myRowNumber; q++){
-        //         for (int p = 1; p <= size; p++){
-        //             printf("%c", curW[q][p]);
-        //         }
-        //         printf("\n");
-        //     }
-        // } 
+#ifdef DEBUG
+        if (myid == 1 && i == 1){
+            printf("world is like!\n");
+            for (int q = 0; q < myRowNumber; q++){
+                for (int p = 1; p <= size; p++){
+                    printf("%c", curW[q][p]);
+                }
+                printf("\n");
+            }
+        } 
+#endif
         if (myid != 0){
             for (int j = 0; j < patternSize-1; j++){
                 for (int k = 1; k <= size; k++){
@@ -344,9 +374,13 @@ int slaveWork(){
         // } 
 
         /*After evolve, transfer the information to neighbours*/
-
+        int *matchArr = transferListToArr(list);
+        int matchSize = list->nItem;
+        MPI_Send(&matchSize, 1, MPI_INT, MASTER_ID , i, MPI_COMM_WORLD);
+        MPI_Send(matchArr, list->nItem, MPI_INT, MASTER_ID , i, MPI_COMM_WORLD);
+        list = newList();    
     }
-    printList(list);
+    //printList(list);
 
 }
 
@@ -681,7 +715,8 @@ void searchSinglePattern(char** world, int wSizeRow, int wSizeCol, int iteration
                     }
                 }
             }
-            if (match){
+            if (match && (wRow-1 + rowOffset <= wSizeCol-pSize)){
+
                 insertEnd(list, iteration, wRow-1 + rowOffset, wCol-1, rotation);
 #ifdef DEBUGMORE
 printf("*** Row = %d, Col = %d\n", wRow-1, wCol-1);
@@ -770,3 +805,44 @@ void printList(MATCHLIST* list)
     }
 }
 
+int* transferListToArr(MATCHLIST* list)
+{
+    int i;
+    MATCH* cur;
+
+    int *arr = (int*) malloc(sizeof(int) * list->nItem);
+
+    if (list->nItem == 0) return arr;
+
+    cur = list->tail->next;
+    for( i = 0; i < list->nItem; i++, cur=cur->next){
+        //printf("%d:%d:%d:%d\n", cur->iteration, cur->row, cur->col, cur->rotation);
+        arr[i] = matchToInt(cur);
+    }
+    return arr;
+}
+
+int matchToInt(MATCH *mat){
+    return (mat->row * 10000 + mat->col*1 + mat->rotation*100000000);
+} 
+
+MATCH* intToMatch(int index, int iteration){
+    MATCH* newItem;
+    newItem = (MATCH*) malloc(sizeof(MATCH));
+    newItem->col = index % 10000;
+    index /= 10000;
+    newItem->row = index % 10000;
+    index /= 10000;
+    newItem->iteration = iteration;
+    newItem->rotation = index;
+    return newItem;
+}
+
+int sortFunction( const void *a, const void *b){
+        if(*(int*)a>*(int*)b)
+                return 1;
+        else if(*(int*)a<*(int*)b)
+                return -1;
+        else
+                return 0;
+}
