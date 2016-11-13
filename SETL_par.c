@@ -334,33 +334,20 @@ int slaveWork(){
 #endif
         if (myid != 0){
             for (int j = 0; j < patternSize-1; j++){
-                for (int k = 1; k <= size; k++){
-                    buffer[k-1] = curW[j+1][k];
-                }
-                MPI_Send(buffer, size, MPI_CHAR, myid - 1, i * size + myid +j, MPI_COMM_WORLD);
+                MPI_Send(curW[j+1]+1, size, MPI_CHAR, myid - 1, i * size + myid +j, MPI_COMM_WORLD);
             }
 
         }
         if (myid != slaves-1){
-            for (int k = 1; k <= size; k++){
-                buffer[k-1] = curW[myRowNumber - patternSize][k];
-            }
-            MPI_Send(buffer, size, MPI_CHAR, myid + 1, i * size +myid, MPI_COMM_WORLD);
+            MPI_Send(curW[myRowNumber - patternSize]+1, size, MPI_CHAR, myid + 1, i * size +myid, MPI_COMM_WORLD);
         }
         if (myid != 0){
-            MPI_Recv(buffer, size, MPI_CHAR, myid - 1, i * size + (myid-1), MPI_COMM_WORLD,&status);
-
-            for (int k = 1; k <= size; k++){
-                curW[0][k] = buffer[k-1];
-            }
+            MPI_Recv(curW[0]+1, size, MPI_CHAR, myid - 1, i * size + (myid-1), MPI_COMM_WORLD,&status);
         }
 
         if (myid != slaves-1){
             for (int j = 0; j < patternSize-1; j++){
-                MPI_Recv(buffer, size, MPI_CHAR, myid + 1, i * size + (myid+1) + j, MPI_COMM_WORLD, &status);
-                for (int k = 1; k <= size; k++){
-                    curW[j + myRowNumber - patternSize +1][k] = buffer[k-1];
-                }
+                MPI_Recv(curW[j + myRowNumber - patternSize +1]+1, size, MPI_CHAR, myid + 1, i * size + (myid+1) + j, MPI_COMM_WORLD, &status);
             }            
         }
         // if (myid == 1 && i == 1){
