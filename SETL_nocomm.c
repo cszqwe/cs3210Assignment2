@@ -343,15 +343,15 @@ int slaveWork(){
 
         //}
         if (myid != slaves-1){
-            for (int k = 1; k <= size; k++){
+            for (int k = 1; k <= size/2; k++){
                 buffer[k-1] = curW[myRowNumber - patternSize][k];
             }
-            MPI_Send(buffer, size, MPI_CHAR, myid + 1, i * size +myid, MPI_COMM_WORLD);
+            MPI_Send(buffer, size/2, MPI_CHAR, myid + 1, i * size +myid, MPI_COMM_WORLD);
         }
         if (myid != 0){
-            MPI_Recv(buffer, size, MPI_CHAR, myid - 1, i * size + (myid-1), MPI_COMM_WORLD,&status);
+            MPI_Recv(buffer, size/2, MPI_CHAR, myid - 1, i * size + (myid-1), MPI_COMM_WORLD,&status);
 
-            for (int k = 1; k <= size; k++){
+            for (int k = 1; k <= size/2; k++){
                 curW[0][k] = buffer[k-1];
             }
         }
